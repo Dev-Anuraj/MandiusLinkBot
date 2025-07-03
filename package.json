@@ -1,0 +1,15 @@
+{
+  "name": "mandius-bot",
+  "version": "1.0.0",
+  "main": "statusBot.js",
+  "scripts": {
+    "start": "node statusBot.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.2",
+    "node-telegram-bot-api": "^0.61.0"
+  },
+  "type": "module"
+}

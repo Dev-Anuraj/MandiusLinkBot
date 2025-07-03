@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: mandius-bot
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: BOT_TOKEN
+        value: your_bot_token_here
+      - key: RENDER_EXTERNAL_URL
+        value: https://mandius-bot.onrender.com
+      - key: PORT
+        value: 3000
+        value: 7801325768:AAGZq3yq9fTpapCgIj1Hc3nE7M2T5F2Vcow
