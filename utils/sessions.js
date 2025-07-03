@@ -1,20 +1,22 @@
-const sessions = {};
+// utils/sessions.js
 
-function startSession(chatId) {
-    sessions[chatId] = { step: 'awaiting_link' };
+const sessions = new Map();
+
+export function startSession(userId) {
+  sessions.set(userId, { step: 'awaitingLink' });
 }
 
-function updateSession(chatId, data) {
-    if (!sessions[chatId]) return;
-    Object.assign(sessions[chatId], data);
+export function updateSession(userId, data) {
+  const session = sessions.get(userId);
+  if (session) {
+    sessions.set(userId, { ...session, ...data });
+  }
 }
 
-function getSession(chatId) {
-    return sessions[chatId];
+export function getSession(userId) {
+  return sessions.get(userId);
 }
 
-function endSession(chatId) {
-    delete sessions[chatId];
+export function endSession(userId) {
+  sessions.delete(userId);
 }
-
-module.exports = { startSession, updateSession, getSession, endSession };
