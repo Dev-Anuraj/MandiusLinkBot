@@ -14,7 +14,7 @@ const PORT = process.env.PORT || 3000;
 const TOKEN = process.env.BOT_TOKEN;
 const URL = process.env.RENDER_EXTERNAL_URL;
 
-const bot = new TelegramBot(TOKEN, { webHook: { port: PORT } });
+const bot = new TelegramBot(TOKEN);
 bot.setWebHook(`${URL}/bot${TOKEN}`);
 
 app.use(express.json());
@@ -80,4 +80,14 @@ bot.on("message", (msg) => {
   }
 });
 
-app.listen(PORT, () => console.log(`🚀 Express server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Express server running on port ${PORT}`);
+}).on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`❌ Port ${PORT} is already in use`);
+    process.exit(1);
+  } else {
+    console.error(`❌ Server error: ${err}`);
+  }
+});
+
