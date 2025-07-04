@@ -1,8 +1,8 @@
-function generateReport({ link, reason, chatId }) {
-    return `📩 Report Sent! Details:
-  - Chat ID: ${chatId}
-  - Link: ${link}
-  - Reason: ${reason}`;
-}
+// utils/reporter.js
 
-module.exports = { generateReport };
+export function generateReport(session) {
+  return `📩 Report Sent! Details:
+- Chat ID: ${session.chatId}
+- Link: ${session.link}
+- Reason: ${session.reason}`;
+}
