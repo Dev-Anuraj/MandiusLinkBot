@@ -26,9 +26,7 @@ bot.onText(/\/start/, (msg) => {
 
 Here are my commands:
 /start - Show welcome message
-/check <link> - Check the status of a Telegram channel or bot
-
-Just type "hi", "hello", or "hey" to greet me! 😄`;
+/check <link> - Check the status of a Telegram channel or bot`;
 
   bot.sendMessage(msg.chat.id, welcome, { parse_mode: 'Markdown' });
 });
