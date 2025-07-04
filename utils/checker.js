@@ -1,9 +1,14 @@
+// utils/checker.js
+import axios from 'axios';
+
 export async function checkChatStatus(link) {
   try {
-    const username = link.replace('https://t.me/', '').replace('@', '');
-    // In production, you'd use Telegram API here
-    return `✅ Checked: [${username}](https://t.me/${username})\nStatus: Seems active!`;
-  } catch (err) {
-    return '❌ Failed to check the status. Please try again later.';
+    // For now, just simulate a response
+    if (link.includes('t.me/')) {
+      return `✅ The link [${link}] appears to be working.`;
+    }
+    return `❌ Invalid link format.`;
+  } catch (error) {
+    return `⚠️ Error checking link: ${error.message}`;
   }
 }
