@@ -12,7 +12,7 @@ const URL = process.env.RENDER_EXTERNAL_URL;
 const app = express();
 app.use(express.json());
 
-const bot = new TelegramBot(TOKEN, { webHook: { port: PORT } });
+const bot = new TelegramBot(TOKEN);
 bot.setWebHook(`${URL}/bot${TOKEN}`);
 
 app.post(`/bot${TOKEN}`, (req, res) => {
