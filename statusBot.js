@@ -65,7 +65,7 @@ bot.onText(/\/start/, (msg) => {
 
 Here are my commands:
 /start - Show welcome message
-/check <link> - Check the status of a Telegram channel or bot`;
+/check <link_or_username> - Check the status of a Telegram channel or bot`; // Updated command description
 
     bot.sendMessage(msg.chat.id, welcome, { parse_mode: 'Markdown' });
 });
@@ -81,22 +81,43 @@ bot.on('message', (msg) => {
     }
 });
 
-// /check command
+// /check command - Now handles links and usernames
 bot.onText(/\/check (.+)/, async (msg, match) => {
     const input = match[1].trim(); // The text after /check
     const chatId = msg.chat.id;
 
-    if (!input.startsWith('https://t.me/')) {
-        return bot.sendMessage(chatId, 'Please provide a valid Telegram link starting with `https://t.me/`');
+    let targetLink;
+
+    // Case 1: Input is already a full Telegram link
+    if (input.startsWith('https://t.me/')) {
+        targetLink = input;
+    }
+    // Case 2: Input is a username starting with '@'
+    else if (input.startsWith('@')) {
+        const username = input.substring(1); // Remove the '@' symbol
+        targetLink = `https://t.me/${username}`;
+    }
+    // Case 3: Input is a plain username (alphanumeric and underscore only)
+    // This regex checks for valid Telegram usernames (can contain letters, numbers, and underscores)
+    else if (input.match(/^[a-zA-Z0-9_]+$/)) {
+        targetLink = `https://t.me/${input}`;
+    }
+    // Case 4: Invalid input format
+    else {
+        return bot.sendMessage(
+            chatId,
+            'Please provide a valid Telegram link (e.g., `https://t.me/channel_name`) or a username (e.g., `@channel_name` or `channel_name`).'
+        );
     }
 
     try {
-        // Call the checkChatStatus function from checker.js
-        const result = await checkChatStatus(input);
+        // Call the checkChatStatus function with the normalized link
+        // IMPORTANT: Ensure your checkChatStatus function can handle both channel and bot links
+        const result = await checkChatStatus(targetLink);
         bot.sendMessage(chatId, result);
     } catch (error) {
-        console.error(`Error checking chat status for ${input}:`, error.message);
-        bot.sendMessage(chatId, `An error occurred while checking the link. Please try again later.`);
+        console.error(`Error checking chat status for ${targetLink}:`, error.message);
+        bot.sendMessage(chatId, `An error occurred while checking the link/username. Please try again later.`);
     }
 });
 
@@ -129,4 +150,3 @@ app.listen(PORT, () => {
     console.log(`🚀 Express server running on port ${PORT}`);
     console.log('Bot is ready to receive messages.');
 });
-
