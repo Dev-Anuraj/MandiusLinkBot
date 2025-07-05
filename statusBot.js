@@ -8,6 +8,11 @@ import { logJoinLeave } from './utils/logger.js';
 import { generateReport } from './utils/reporter.js';
 import { startSession, updateSession, getSession, endSession } from './utils/sessions.js';
 
+// Import Firestore modules
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, getDoc, query, where, getDocs } from 'firebase/firestore';
+
 // Load environment variables from .env file
 dotenv.config();
 
@@ -16,6 +21,12 @@ const PORT = process.env.PORT || 5000; // Render will provide process.env.PORT. 
 const TOKEN = process.env.BOT_TOKEN;
 const URL = process.env.RENDER_EXTERNAL_URL; // Your Render service's external URL
 const DEFAULT_CHANNEL_CHAT_ID = process.env.TELEGRAM_CHANNEL_CHAT_ID; // For reporting feature
+
+// Global Firebase variables (will be initialized later)
+let firebaseApp;
+let db;
+let auth;
+let currentUserId = null; // To store the authenticated user ID
 
 // Check if essential environment variables are set
 if (!TOKEN) {
@@ -44,8 +55,6 @@ bot.setWebHook(webhookUrl)
     })
     .catch(err => {
         console.error('Failed to set webhook:', err.message);
-        // If webhook fails to set, the bot won't receive messages.
-        // Consider exiting the process or logging a critical error.
     });
 
 // Handle incoming Telegram updates via the webhook
@@ -59,6 +68,109 @@ app.get('/', (req, res) => {
     res.send('Telegram Bot Webhook Server is running!');
 });
 
+// --- Firebase Initialization and Authentication ---
+async function initializeFirebase() {
+    try {
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+
+        if (Object.keys(firebaseConfig).length === 0) {
+            console.error("Firebase config is not available. Firestore operations will not work.");
+            return;
+        }
+
+        firebaseApp = initializeApp(firebaseConfig);
+        db = getFirestore(firebaseApp);
+        auth = getAuth(firebaseApp);
+
+        // Authenticate the user
+        if (typeof __initial_auth_token !== 'undefined') {
+            await signInWithCustomToken(auth, __initial_auth_token);
+            console.log("Signed in with custom token.");
+        } else {
+            await signInAnonymously(auth);
+            console.log("Signed in anonymously.");
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                currentUserId = user.uid;
+                console.log("Firebase Auth state changed. User ID:", currentUserId);
+            } else {
+                currentUserId = null;
+                console.log("Firebase Auth state changed. No user is signed in.");
+            }
+        });
+
+        console.log("Firebase initialized and authenticated.");
+    } catch (error) {
+        console.error("Failed to initialize Firebase or authenticate:", error);
+    }
+}
+
+// Call Firebase initialization when the server starts
+initializeFirebase();
+
+// --- Firestore Utility Functions for Monitored Users ---
+async function getMonitoredUsersCollectionRef(userId) {
+    if (!db || !userId) {
+        console.error("Firestore DB or User ID not available for collection reference.");
+        return null;
+    }
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    return collection(db, `artifacts/${appId}/users/${userId}/monitoredUsers`);
+}
+
+async function addMonitoredUser(userId, usernameToAdd, addedBy) {
+    if (!db || !userId) {
+        console.error("Firestore DB or User ID not available to add user.");
+        return { success: false, message: "Service not ready." };
+    }
+
+    const usersCollectionRef = await getMonitoredUsersCollectionRef(userId);
+    if (!usersCollectionRef) return { success: false, message: "Could not get collection reference." };
+
+    // Create a document ID from the username for easy lookup and to prevent duplicates
+    const userDocRef = doc(usersCollectionRef, usernameToAdd.replace(/[^a-zA-Z0-9_]/g, '')); // Sanitize username for doc ID
+
+    try {
+        const docSnap = await getDoc(userDocRef);
+        if (docSnap.exists()) {
+            return { success: false, message: `User ${usernameToAdd} is already being monitored.` };
+        } else {
+            await setDoc(userDocRef, {
+                username: usernameToAdd,
+                addedBy: addedBy,
+                addedAt: new Date().toISOString(),
+                // You can add more fields here like 'status', 'lastChecked', etc.
+            });
+            return { success: true, message: `User ${usernameToAdd} added to monitoring list.` };
+        }
+    } catch (error) {
+        console.error(`Error adding user ${usernameToAdd} to Firestore:`, error);
+        return { success: false, message: `Failed to add ${usernameToAdd}: ${error.message}` };
+    }
+}
+
+async function isUserMonitored(userId, usernameToCheck) {
+    if (!db || !userId) {
+        console.error("Firestore DB or User ID not available to check user.");
+        return false;
+    }
+    const usersCollectionRef = await getMonitoredUsersCollectionRef(userId);
+    if (!usersCollectionRef) return false;
+
+    const userDocRef = doc(usersCollectionRef, usernameToCheck.replace(/[^a-zA-Z0-9_]/g, ''));
+    try {
+        const docSnap = await getDoc(userDocRef);
+        return docSnap.exists();
+    } catch (error) {
+        console.error(`Error checking if user ${usernameToCheck} is monitored:`, error);
+        return false;
+    }
+}
+
+
 // --- Bot Command Handlers ---
 
 // Listen for the /start command
@@ -70,6 +182,7 @@ Here are my commands:
 /check <link_or_username> - Check the status of a Telegram channel or bot
 /report - Start a guided process to send a report
 /report <channel_username_or_id> <your_message> - Send a quick report
+/add3 <username1> <username2> ... - Add multiple usernames to the monitoring list
 /cancel - Cancel any ongoing operation`; // Updated command description
 
     bot.sendMessage(msg.chat.id, welcome, { parse_mode: 'Markdown' });
@@ -202,10 +315,55 @@ bot.onText(/\/cancel/, (msg) => {
     }
 });
 
+// --- New Feature: /add3 command to add multiple usernames to monitoring list ---
+bot.onText(/\/add3 (.+)/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const userId = currentUserId; // Use the authenticated Firebase User ID
+    const addedBy = msg.from.username ? `@${msg.from.username}` : msg.from.first_name || 'Anonymous';
+
+    if (!userId) {
+        return bot.sendMessage(chatId, "Bot is not fully initialized. Please try again in a moment.");
+    }
+    if (!db) {
+        return bot.sendMessage(chatId, "Firestore is not available. Cannot add users.");
+    }
+
+    const usernamesInput = match[1].trim();
+    // Split by spaces, filter out empty strings, and ensure they start with '@' or are plain usernames
+    let usernames = usernamesInput.split(/\s+/).filter(u => u.length > 0);
+
+    if (usernames.length === 0) {
+        return bot.sendMessage(chatId, 'Please provide at least one username to add. Example: `/add3 @user1 @user2`');
+    }
+
+    // Inform user that processing has started
+    await bot.sendMessage(chatId, `Processing ${usernames.length} username(s)...`);
+
+    for (const username of usernames) {
+        // Normalize username: ensure it starts with '@'
+        const normalizedUsername = username.startsWith('@') ? username : `@${username}`;
+
+        // Basic validation for username format (can be expanded)
+        if (!normalizedUsername.match(/^@[a-zA-Z0-9_]+$/)) {
+            await bot.sendMessage(chatId, `⚠️ Invalid username format: \`${username}\`. Skipping.`);
+            continue;
+        }
+
+        const result = await addMonitoredUser(userId, normalizedUsername, addedBy);
+        if (result.success) {
+            await bot.sendMessage(chatId, `✅ Entità \`${normalizedUsername}\` aggiunta alla lista 3.`);
+        } else {
+            await bot.sendMessage(chatId, `❌ ${result.message}`);
+        }
+    }
+    await bot.sendMessage(chatId, 'Finished processing all usernames.');
+});
+
+
 // General message handler for session-based interactions
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
-    const userId = msg.from.id;
+    const userId = msg.from.id; // Telegram user ID
     const text = msg.text;
 
     // Ignore commands (they are handled by onText) and messages without text
@@ -309,6 +467,8 @@ bot.on('webhook_error', (error) => {
 });
 
 // Start Express server
+// Ensure Firebase is initialized before starting the server if possible,
+// or handle cases where currentUserId might be null initially.
 app.listen(PORT, () => {
     console.log(`🚀 Express server running on port ${PORT}`);
     console.log('Bot is ready to receive messages.');
