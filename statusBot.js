@@ -27,6 +27,7 @@ let firebaseApp;
 let db;
 let auth;
 let currentUserId = null; // To store the authenticated user ID
+let firebaseAuthReady = false; // New flag to indicate Firebase auth state is known
 
 // Check if essential environment variables are set
 if (!TOKEN) {
@@ -48,6 +49,7 @@ app.use(express.json()); // To parse JSON bodies from Telegram updates
 const bot = new TelegramBot(TOKEN);
 
 // Set the webhook URL with Telegram
+// This needs to be done early so Telegram can reach the bot
 const webhookUrl = `${URL}/bot${TOKEN}`;
 bot.setWebHook(webhookUrl)
     .then(() => {
@@ -76,40 +78,44 @@ async function initializeFirebase() {
 
         if (Object.keys(firebaseConfig).length === 0) {
             console.error("Firebase config is not available. Firestore operations will not work.");
-            return;
+            return; // Exit if no config
         }
 
         firebaseApp = initializeApp(firebaseConfig);
         db = getFirestore(firebaseApp);
         auth = getAuth(firebaseApp);
 
-        // Authenticate the user
-        if (typeof __initial_auth_token !== 'undefined') {
-            await signInWithCustomToken(auth, __initial_auth_token);
-            console.log("Signed in with custom token.");
-        } else {
-            await signInAnonymously(auth);
-            console.log("Signed in anonymously.");
-        }
-
-        onAuthStateChanged(auth, (user) => {
-            if (user) {
-                currentUserId = user.uid;
-                console.log("Firebase Auth state changed. User ID:", currentUserId);
-            } else {
-                currentUserId = null;
-                console.log("Firebase Auth state changed. No user is signed in.");
-            }
+        // Use a promise to wait for the initial auth state to be known
+        await new Promise(resolve => {
+            const unsubscribe = onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    currentUserId = user.uid;
+                    console.log("Firebase Auth state changed. User ID:", currentUserId);
+                } else {
+                    // Try to sign in anonymously if no user is found (e.g., first run or token expired)
+                    try {
+                        console.log("No user signed in. Attempting anonymous sign-in...");
+                        await signInAnonymously(auth);
+                        currentUserId = auth.currentUser?.uid; // Set after anonymous sign-in
+                        console.log("Signed in anonymously. User ID:", currentUserId);
+                    } catch (anonError) {
+                        console.error("Anonymous sign-in failed:", anonError);
+                        currentUserId = null;
+                    }
+                }
+                firebaseAuthReady = true; // Set flag once initial state is known
+                unsubscribe(); // Unsubscribe after the first call to prevent multiple resolves
+                resolve();
+            });
         });
 
-        console.log("Firebase initialized and authenticated.");
+        // After the promise resolves, currentUserId should be set (or null if anonymous failed/no user)
+        console.log("Firebase initialized and initial authentication state determined.");
     } catch (error) {
         console.error("Failed to initialize Firebase or authenticate:", error);
+        firebaseAuthReady = false; // Ensure flag is false if initialization fails
     }
 }
-
-// Call Firebase initialization when the server starts
-initializeFirebase();
 
 // --- Firestore Utility Functions for Monitored Users ---
 async function getMonitoredUsersCollectionRef(userId) {
@@ -318,13 +324,13 @@ bot.onText(/\/cancel/, (msg) => {
 // --- New Feature: /add3 command to add multiple usernames to monitoring list ---
 bot.onText(/\/add3 (.+)/, async (msg, match) => {
     const chatId = msg.chat.id;
-    const userId = currentUserId; // Use the authenticated Firebase User ID
     const addedBy = msg.from.username ? `@${msg.from.username}` : msg.from.first_name || 'Anonymous';
 
-    if (!userId) {
-        return bot.sendMessage(chatId, "Bot is not fully initialized. Please try again in a moment.");
+    // Check if Firebase authentication is ready AND currentUserId is set
+    if (!firebaseAuthReady || !currentUserId) {
+        return bot.sendMessage(chatId, "The bot is still initializing its database connection. Please try again in a few moments.");
     }
-    if (!db) {
+    if (!db) { // This check might be redundant if firebaseAuthReady implies db is set, but good for safety.
         return bot.sendMessage(chatId, "Firestore is not available. Cannot add users.");
     }
 
@@ -349,7 +355,7 @@ bot.onText(/\/add3 (.+)/, async (msg, match) => {
             continue;
         }
 
-        const result = await addMonitoredUser(userId, normalizedUsername, addedBy);
+        const result = await addMonitoredUser(currentUserId, normalizedUsername, addedBy); // Use currentUserId
         if (result.success) {
             await bot.sendMessage(chatId, `✅ Entità \`${normalizedUsername}\` aggiunta alla lista 3.`);
         } else {
@@ -466,10 +472,16 @@ bot.on('webhook_error', (error) => {
     console.error('Webhook error:', error.code, error.message);
 });
 
-// Start Express server
-// Ensure Firebase is initialized before starting the server if possible,
-// or handle cases where currentUserId might be null initially.
-app.listen(PORT, () => {
-    console.log(`🚀 Express server running on port ${PORT}`);
-    console.log('Bot is ready to receive messages.');
-});
+// --- Main execution flow ---
+// Wrap the server start in an async function to await Firebase initialization
+(async () => {
+    console.log('Starting Firebase initialization...');
+    await initializeFirebase();
+    console.log('Firebase initialization complete. Starting Express server...');
+
+    // Start Express server ONLY after Firebase is ready
+    app.listen(PORT, () => {
+        console.log(`🚀 Express server running on port ${PORT}`);
+        console.log('Bot is ready to receive messages.');
+    });
+})();
