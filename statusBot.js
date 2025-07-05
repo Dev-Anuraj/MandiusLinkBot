@@ -76,8 +76,12 @@ async function initializeFirebase() {
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
 
+        console.log("Firebase Init: App ID:", appId);
+        console.log("Firebase Init: Config provided:", Object.keys(firebaseConfig).length > 0);
+
         if (Object.keys(firebaseConfig).length === 0) {
             console.error("Firebase config is not available. Firestore operations will not work.");
+            firebaseAuthReady = false; // Ensure flag is false if config is missing
             return; // Exit if no config
         }
 
@@ -88,39 +92,48 @@ async function initializeFirebase() {
         // Use a promise to wait for the initial auth state to be known
         await new Promise(resolve => {
             const unsubscribe = onAuthStateChanged(auth, async (user) => {
+                console.log("Firebase Auth: onAuthStateChanged triggered.");
                 if (user) {
                     currentUserId = user.uid;
-                    console.log("Firebase Auth state changed. User ID:", currentUserId);
+                    console.log("Firebase Auth: User signed in. UID:", currentUserId);
                 } else {
                     // Try to sign in anonymously if no user is found (e.g., first run or token expired)
                     try {
-                        console.log("No user signed in. Attempting anonymous sign-in...");
-                        await signInAnonymously(auth);
-                        currentUserId = auth.currentUser?.uid; // Set after anonymous sign-in
-                        console.log("Signed in anonymously. User ID:", currentUserId);
+                        console.log("Firebase Auth: No user signed in. Attempting anonymous sign-in...");
+                        // Check if __initial_auth_token is defined and use it
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                            console.log("Firebase Auth: Signed in with custom token.");
+                        } else {
+                            await signInAnonymously(auth);
+                            console.log("Firebase Auth: Signed in anonymously.");
+                        }
+                        currentUserId = auth.currentUser?.uid; // Set after sign-in attempt
+                        console.log("Firebase Auth: Current User ID after sign-in attempt:", currentUserId);
                     } catch (anonError) {
-                        console.error("Anonymous sign-in failed:", anonError);
+                        console.error("Firebase Auth: Anonymous/Custom Token sign-in failed:", anonError.message);
                         currentUserId = null;
                     }
                 }
                 firebaseAuthReady = true; // Set flag once initial state is known
+                console.log("Firebase Auth: firebaseAuthReady set to true.");
                 unsubscribe(); // Unsubscribe after the first call to prevent multiple resolves
                 resolve();
             });
         });
 
-        // After the promise resolves, currentUserId should be set (or null if anonymous failed/no user)
-        console.log("Firebase initialized and initial authentication state determined.");
+        console.log("Firebase initialized and initial authentication state determined. Final currentUserId:", currentUserId);
     } catch (error) {
-        console.error("Failed to initialize Firebase or authenticate:", error);
+        console.error("Firebase Init: Failed to initialize Firebase or authenticate:", error.message);
         firebaseAuthReady = false; // Ensure flag is false if initialization fails
     }
 }
 
 // --- Firestore Utility Functions for Monitored Users ---
 async function getMonitoredUsersCollectionRef(userId) {
+    console.log("Firestore Util: getMonitoredUsersCollectionRef called with userId:", userId);
     if (!db || !userId) {
-        console.error("Firestore DB or User ID not available for collection reference.");
+        console.error("Firestore Util: DB or User ID not available for collection reference. db:", !!db, "userId:", userId);
         return null;
     }
     const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
@@ -128,13 +141,17 @@ async function getMonitoredUsersCollectionRef(userId) {
 }
 
 async function addMonitoredUser(userId, usernameToAdd, addedBy) {
+    console.log(`Firestore Util: addMonitoredUser called for userId: ${userId}, username: ${usernameToAdd}`);
     if (!db || !userId) {
-        console.error("Firestore DB or User ID not available to add user.");
+        console.error("Firestore Util: DB or User ID not available to add user. db:", !!db, "userId:", userId);
         return { success: false, message: "Service not ready." };
     }
 
     const usersCollectionRef = await getMonitoredUsersCollectionRef(userId);
-    if (!usersCollectionRef) return { success: false, message: "Could not get collection reference." };
+    if (!usersCollectionRef) {
+        console.error("Firestore Util: Could not get collection reference for addMonitoredUser.");
+        return { success: false, message: "Could not get collection reference." };
+    }
 
     // Create a document ID from the username for easy lookup and to prevent duplicates
     const userDocRef = doc(usersCollectionRef, usernameToAdd.replace(/[^a-zA-Z0-9_]/g, '')); // Sanitize username for doc ID
@@ -142,36 +159,42 @@ async function addMonitoredUser(userId, usernameToAdd, addedBy) {
     try {
         const docSnap = await getDoc(userDocRef);
         if (docSnap.exists()) {
+            console.log(`Firestore Util: User ${usernameToAdd} already exists.`);
             return { success: false, message: `User ${usernameToAdd} is already being monitored.` };
         } else {
             await setDoc(userDocRef, {
-                username: usernameToAdd,
+                username: normalizedUsername, // Use normalized username for consistency
                 addedBy: addedBy,
                 addedAt: new Date().toISOString(),
                 // You can add more fields here like 'status', 'lastChecked', etc.
             });
+            console.log(`Firestore Util: User ${usernameToAdd} added successfully.`);
             return { success: true, message: `User ${usernameToAdd} added to monitoring list.` };
         }
     } catch (error) {
-        console.error(`Error adding user ${usernameToAdd} to Firestore:`, error);
+        console.error(`Firestore Util: Error adding user ${usernameToAdd} to Firestore:`, error.message);
         return { success: false, message: `Failed to add ${usernameToAdd}: ${error.message}` };
     }
 }
 
 async function isUserMonitored(userId, usernameToCheck) {
+    console.log(`Firestore Util: isUserMonitored called for userId: ${userId}, username: ${usernameToCheck}`);
     if (!db || !userId) {
-        console.error("Firestore DB or User ID not available to check user.");
+        console.error("Firestore Util: DB or User ID not available to check user. db:", !!db, "userId:", userId);
         return false;
     }
     const usersCollectionRef = await getMonitoredUsersCollectionRef(userId);
-    if (!usersCollectionRef) return false;
+    if (!usersCollectionRef) {
+        console.error("Firestore Util: Could not get collection reference for isUserMonitored.");
+        return false;
+    }
 
     const userDocRef = doc(usersCollectionRef, usernameToCheck.replace(/[^a-zA-Z0-9_]/g, ''));
     try {
         const docSnap = await getDoc(userDocRef);
         return docSnap.exists();
     } catch (error) {
-        console.error(`Error checking if user ${usernameToCheck} is monitored:`, error);
+        console.error(`Firestore Util: Error checking if user ${usernameToCheck} is monitored:`, error.message);
         return false;
     }
 }
@@ -326,11 +349,15 @@ bot.onText(/\/add3 (.+)/, async (msg, match) => {
     const chatId = msg.chat.id;
     const addedBy = msg.from.username ? `@${msg.from.username}` : msg.from.first_name || 'Anonymous';
 
+    console.log("Add3 Command: Checking Firebase readiness...");
+    console.log("Add3 Command: firebaseAuthReady:", firebaseAuthReady);
+    console.log("Add3 Command: currentUserId:", currentUserId);
+
     // Check if Firebase authentication is ready AND currentUserId is set
     if (!firebaseAuthReady || !currentUserId) {
         return bot.sendMessage(chatId, "The bot is still initializing its database connection. Please try again in a few moments.");
     }
-    if (!db) { // This check might be redundant if firebaseAuthReady implies db is set, but good for safety.
+    if (!db) {
         return bot.sendMessage(chatId, "Firestore is not available. Cannot add users.");
     }
 
@@ -475,9 +502,9 @@ bot.on('webhook_error', (error) => {
 // --- Main execution flow ---
 // Wrap the server start in an async function to await Firebase initialization
 (async () => {
-    console.log('Starting Firebase initialization...');
+    console.log('Main Flow: Starting Firebase initialization...');
     await initializeFirebase();
-    console.log('Firebase initialization complete. Starting Express server...');
+    console.log('Main Flow: Firebase initialization complete. Starting Express server...');
 
     // Start Express server ONLY after Firebase is ready
     app.listen(PORT, () => {
