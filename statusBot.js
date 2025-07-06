@@ -2,7 +2,7 @@ import express from 'express';
 import TelegramBot from 'node-telegram-bot-api';
 import dotenv from 'dotenv';
 
-// Import only the necessary utility functions
+// Import the enhanced checkChatStatus function
 import { checkChatStatus } from './utils/checker.js';
 
 // Load environment variables from .env file
@@ -100,20 +100,25 @@ bot.onText(/\/check (.+)/, async (msg, match) => {
     const input = match[1].trim(); // The text after /check
     const chatId = msg.chat.id;
 
-    let targetLink;
+    let targetIdentifier; // This will be the username or chat ID
 
-    // Case 1: Input is already a full Telegram link
+    // Case 1: Input is a full Telegram link
     if (input.startsWith('https://t.me/')) {
-        targetLink = input;
+        targetIdentifier = input.substring(input.lastIndexOf('/') + 1);
+        if (targetIdentifier.startsWith('+')) { // Handle invite links with chat ID
+            // Telegram bot API getChat requires chat ID to be prefixed with '-' for channels/supergroups
+            targetIdentifier = `-${targetIdentifier.substring(1)}`;
+        } else if (!targetIdentifier.startsWith('@')) { // Ensure username from link starts with @
+            targetIdentifier = `@${targetIdentifier}`;
+        }
     }
     // Case 2: Input is a username starting with '@'
     else if (input.startsWith('@')) {
-        const username = input.substring(1); // Remove the '@' symbol
-        targetLink = `https://t.me/${username}`;
+        targetIdentifier = input;
     }
     // Case 3: Input is a plain username (alphanumeric and underscore only)
     else if (input.match(/^[a-zA-Z0-9_]+$/)) {
-        targetLink = `https://t.me/${input}`;
+        targetIdentifier = `@${input}`;
     }
     // Case 4: Invalid input format
     else {
@@ -123,13 +128,27 @@ bot.onText(/\/check (.+)/, async (msg, match) => {
         );
     }
 
+    // Send a "checking..." message
+    const processingMessage = await bot.sendMessage(chatId, `🔍 Checking status for \`${input}\`...`);
+
     try {
-        // Call the checkChatStatus function with the normalized link
-        const result = await checkChatStatus(targetLink);
-        bot.sendMessage(chatId, result);
+        // Pass the bot instance to checkChatStatus
+        const result = await checkChatStatus(bot, targetIdentifier);
+        // Edit the "checking..." message with the actual result
+        await bot.editMessageText(result, {
+            chat_id: processingMessage.chat.id,
+            message_id: processingMessage.message_id,
+            parse_mode: 'MarkdownV2'
+        });
     } catch (error) {
-        console.error(`Error checking chat status for ${targetLink}:`, error.message);
-        bot.sendMessage(chatId, `An error occurred while checking the link/username. Please try again later.`);
+        console.error(`Error checking chat status for ${targetIdentifier}:`, error.message);
+        const errorMessage = `❌ An error occurred while checking the status for \`${input}\`\. Please ensure the link\/username is correct and try again later\. Error: ${error.message}`;
+        // Edit the "checking..." message with the error
+        await bot.editMessageText(errorMessage, {
+            chat_id: processingMessage.chat.id,
+            message_id: processingMessage.message_id,
+            parse_mode: 'MarkdownV2'
+        });
     }
 });
 
