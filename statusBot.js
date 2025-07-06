@@ -50,10 +50,23 @@ app.get('/', (req, res) => {
     res.send('Telegram Bot Webhook Server is running!');
 });
 
+// --- Helper function to escape MarkdownV2 characters ---
+// This function is also in utils/checker.js, but duplicated here for self-containment
+// of the main bot file's text formatting. For shared logic, it's better to import.
+// However, for simple string literals, direct escaping is also fine.
+function escapeMarkdownV2(text) {
+    if (!text) return '';
+    // Escape characters that have special meaning in MarkdownV2
+    return text.replace(/[_*[\]()~`>#+\-=|{}.!]/g, '\\$&');
+}
+
+
 // --- Bot Command Handlers ---
 
 // Listen for the /start command
 bot.onText(/\/start/, (msg) => {
+    // Note: For /start, we're using 'Markdown' (not V2), so less strict escaping needed.
+    // However, for consistency, we can still use the escape function if desired.
     const welcome = `👋 Welcome *${msg.from.first_name || 'user'}*! I'm your Telegram Status Monitor.
 
 My primary function is to provide real-time status checks for Telegram channels, usernames, and bots.
@@ -73,17 +86,19 @@ bot.on('message', async (msg) => {
 
     const greetings = ['hi', 'hello', 'hey', 'hii', 'helo', 'hola'];
     if (greetings.includes(text)) {
-        const greetingMessage = `👋 Hello *${msg.from.first_name || 'there'}*!
+        // Escaping the '!' character and other potential MarkdownV2 special characters
+        const userName = escapeMarkdownV2(msg.from.first_name || 'there');
+        const greetingMessage = `👋 Hello *${userName}*\\!
 
-I specialize in providing real-time status updates for Telegram channels, usernames, and bots with actual data.
+I specialize in providing real-time status updates for Telegram channels, usernames, and bots with actual data\\.
 
 To get started, you can:
-• Use the \`/check <link_or_username>\` command\. For example:
+• Use the \`/check <link_or_username>\` command\\. For example:
   \`\/check @telegram\`
   \`\/check https:\/\/t\.me\/botfather\`
-• Or, for a complete overview of my capabilities, simply type \/help\.
+• Or, for a complete overview of my capabilities, simply type \/help\\.
 
-I'm here to assist you with precise and professional status monitoring\.`;
+I'm here to assist you with precise and professional status monitoring\\.`;
 
         try {
             await bot.sendMessage(msg.chat.id, greetingMessage, { parse_mode: 'MarkdownV2' }); // Use MarkdownV2 for clickable links
@@ -129,7 +144,7 @@ bot.onText(/\/check (.+)/, async (msg, match) => {
     }
 
     // Send a "checking..." message
-    const processingMessage = await bot.sendMessage(chatId, `🔍 Checking status for \`${input}\`...`);
+    const processingMessage = await bot.sendMessage(chatId, `🔍 Checking status for \`${escapeMarkdownV2(input)}\`...`);
 
     try {
         // Pass the bot instance to checkChatStatus
@@ -142,7 +157,7 @@ bot.onText(/\/check (.+)/, async (msg, match) => {
         });
     } catch (error) {
         console.error(`Error checking chat status for ${targetIdentifier}:`, error.message);
-        const errorMessage = `❌ An error occurred while checking the status for \`${input}\`\. Please ensure the link\/username is correct and try again later\. Error: ${error.message}`;
+        const errorMessage = `❌ An error occurred while checking the status for \`${escapeMarkdownV2(input)}\`\\. Please ensure the link\/username is correct and try again later\\. Error: ${escapeMarkdownV2(error.message)}`;
         // Edit the "checking..." message with the error
         await bot.editMessageText(errorMessage, {
             chat_id: processingMessage.chat.id,
