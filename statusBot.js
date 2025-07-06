@@ -163,7 +163,7 @@ async function addMonitoredUser(userId, usernameToAdd, addedBy) {
             return { success: false, message: `User ${usernameToAdd} is already being monitored.` };
         } else {
             await setDoc(userDocRef, {
-                username: normalizedUsername, // Use normalized username for consistency
+                username: usernameToAdd, // Use normalized username for consistency
                 addedBy: addedBy,
                 addedAt: new Date().toISOString(),
                 // You can add more fields here like 'status', 'lastChecked', etc.
@@ -218,13 +218,25 @@ Here are my commands:
 });
 
 // Greetings
-bot.on('message', (msg) => {
+bot.on('message', async (msg) => { // Made async to allow await sendMessage
     const text = msg.text?.toLowerCase();
     if (!text) return; // Ignore messages without text
 
     const greetings = ['hi', 'hello', 'hey', 'hii', 'helo', 'hola'];
     if (greetings.includes(text)) {
-        bot.sendMessage(msg.chat.id, `👋 Hello *${msg.from.first_name || 'there'}*!`, { parse_mode: 'Markdown' });
+        const greetingMessage = `👋 Hello *${msg.from.first_name || 'there'}*!
+I can help you check the status of Telegram channels/bots and send reports.
+
+*Try these commands:*
+• Use \`/check <link_or_username>\` to instantly check a Telegram channel, username, or bot (e.g., \`/check @telegram\` or \`/check https://t.me/botfather\`).
+• Use \`/report\` to start a guided process for sending a detailed report.
+• Or simply type \`/help\` for a full list of commands.`;
+
+        try {
+            await bot.sendMessage(msg.chat.id, greetingMessage, { parse_mode: 'Markdown' });
+        } catch (error) {
+            console.error('Error sending greeting message:', error.message);
+        }
     }
 });
 
@@ -480,11 +492,11 @@ bot.on('message', async (msg) => {
                 break;
         }
     } else {
-        // If no active session and not a command, provide a general response
+        // If no active session and not a command, provide a general response (unless it's a greeting, which is handled above)
         const lowerText = text.toLowerCase();
         const greetings = ['hi', 'hello', 'hey', 'hii', 'helo', 'hola'];
-        if (!greetings.includes(lowerText)) { // Avoid double greeting
-            bot.sendMessage(chatId, "I received your message! Try using one of my commands like /start or /check.");
+        if (!greetings.includes(lowerText)) {
+            bot.sendMessage(chatId, "I received your message! Try using one of my commands like /start or /help."); // Suggest /help here
         }
     }
 });
